@@ -1,0 +1,633 @@
+---
+title: "Stats c173 Pollution in India"
+author: "Yonatan Khalil"
+date: "2/28/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, warning = FALSE, results="hide"}
+
+library(geoR)
+library(gstat)
+library(sp)
+
+```
+
+
+## Introduction
+
+  Across the globe, Pollution is one of the most serious issues contributing to the degradation of our environmental and health. Each industry has pooled in efforts to mitigate emissions, but one of the most important pieces for improving the collective issue is data. In this project we specifically look towards data from 152 monitoring sites in India collected in 2019. The dataset is sourced from Kaggle and is labeled "Air pollution dataset including PM2.5, PM10, OZONE, NO2, SO2, CO pollutant information" (https://www.kaggle.com/rabhar/air-pollution-dataset-india-2019). This data is geostatistical in nature as there are a select number of sites observing pollutants for the general area.  
+  
+  Of the six factors, our variable of interest is PM2.5 defined as fine inhalable particles with diameters that are generally 2.5 micrometers and smaller according to the Environmental Protection Agency. This variable was chosen due to the broad health concerns associated with such particles entering the lungs along with the importance for the general public to avoid PM2.5 exposure. The goal of this project is to find the best method of predicting such geostatistical data in order to truly see the broader picture of PM2.5 pollution in the region.
+
+
+
+
+
+
+# Data Cleaning
+
+```{r}
+
+a <- read.csv("combined.csv",header = TRUE)
+
+complete_a <- a[complete.cases(a),] # Remove NA values
+
+length(unique(complete_a$id))
+
+
+unique_id <- unique(complete_a$id)
+
+input_frame <- cbind(rep(NA, 152), rep(NA, 152), rep(NA, 152), rep(NA, 152), rep(NA, 152), rep(NA, 152))
+
+for(i in 1:length(unique_id)){
+  tempor <- complete_a[which(complete_a$id == unique_id[i]),]
+  input_frame[i,1] <- mean(tempor[,"longitude"]) 
+  input_frame[i,2] <- mean(tempor[,"latitude"])
+  input_frame[i,3] <- mean(tempor[,"PM2.5"])
+  input_frame[i,4] <- mean(tempor[,"PM10"])
+  input_frame[i,5] <- mean(tempor[,"NO2"]) 
+  input_frame[i,6] <- mean(tempor[,"NH3"]) 
+  #input_frame[i,4] <- mean(tempor[,"SO2"]) # Removed
+  #input_frame[i,6] <- mean(tempor[,"CO"]) # Removed
+  #input_frame[i,4] <- mean(tempor[,"OZONE"]) # Removed
+
+}
+
+#input_frame
+
+usable_india_data <- as.data.frame(input_frame)
+
+names(usable_india_data)[1] <- "Longitude"
+names(usable_india_data)[2] <- "latitude"
+names(usable_india_data)[3] <- "PM2.5"
+names(usable_india_data)[4] <- "PM10"
+names(usable_india_data)[5] <- "NO2"
+names(usable_india_data)[6] <- "NH3"
+
+head(usable_india_data)
+
+```
+
+The data cleaning process began with removing all incomplete observations with the complete.cases function. We then identified the uniques locations with the unique function and the id variable which defines the site values. There were 152 unique sites and in order to create a usable dataset, the mean of four predictors were chosen (PM2.5, PM10, NO2, and NH3). Finally, the columns of the dataset were named and the result was a clean dataset we could utilize. 
+
+
+
+
+
+
+
+
+
+
+
+
+# Non-Spacial Exploratory Analysis
+
+```{r}
+
+plot(usable_india_data)
+
+cor(usable_india_data)
+
+```
+
+
+From the matrix plots and the correlation matrix we find that the four chosen pollutants have a very low correlation with longitude location values, but a moderately high correlation with the latitude location values. In addition, we should note that all pollutants are moderately correlated with each other and our variable of interest PM2.5 is significantly correlated with a related pollutant PM10 (.92375181). 
+
+\newpage
+
+#### PM2.5
+```{r}
+
+plot(as.geodata(usable_india_data[,c(1,2,3)]))
+
+```
+
+PM2.5 shows a nearly linear correlation to its Y coordinate or latitude values and the distribution of the variable is bimodal. 
+
+\newpage
+
+#### PM10
+```{r}
+
+plot(as.geodata(usable_india_data[,c(1,2,4)]))
+
+```
+
+PM10 also shows a nearly linear correlation to its Y coordinate or latitude values and the distribution of the variable is Unimodal. 
+
+\newpage
+
+#### NO2
+```{r}
+
+plot(as.geodata(usable_india_data[,c(1,2,5)]))
+
+```
+
+NO2 once again shows a very clear linear correlation to its Y coordinate or latitude values and the distribution of the variable is Unimodal. 
+
+\newpage
+
+#### NH3
+```{r}
+plot(as.geodata(usable_india_data[,c(1,2,6)]))
+```
+
+NH3 is the final predictor that shows a very clear linear correlation to its Y coordinate or latitude values and the distribution of the variable is Unimodal. However, there is a distinct skew in our data as most observations of NH3 fall between 0 and 15. 
+
+
+```{r}
+
+par(mfrow = c(3,2))
+plot(ecdf(usable_india_data[,1])) # ECDF of Longitude
+plot(ecdf(usable_india_data[,2])) # ECDF of Latitude
+plot(ecdf(usable_india_data[,3])) # ECDF of PM2.5
+plot(ecdf(usable_india_data[,4])) # ECDF of PM10
+plot(ecdf(usable_india_data[,5])) # ECDF of NO2
+plot(ecdf(usable_india_data[,6])) # ECDF of NH3
+
+
+```
+
+
+```{r}
+boxplot(usable_india_data)
+```
+
+The boxplot above shows that the distribution of our target variable has a wider span and more clear distribution than that of other pollutants. Also, adding to what was found from the individual examinations of variables above we find that PM10 has a similar distribution to that of PM2.5. 
+
+
+
+
+
+
+
+\newpage
+
+
+
+# Spacial Analysis
+
+
+```{r, warning = FALSE, results="hide"}
+
+par(mfrow = c(2,2))
+plot(variog(as.geodata(usable_india_data[,c(1,2,3)])), main = "PM2.5 Variogram")
+plot(variog(as.geodata(usable_india_data[,c(1,2,4)])), main = "PM10 Variogram")
+plot(variog(as.geodata(usable_india_data[,c(1,2,5)])), main = "N02 Variogram")
+plot(variog(as.geodata(usable_india_data[,c(1,2,6)])), main = "NH3 Variogram")
+
+
+new_a <- usable_india_data[,c(1,2,3)]
+names(new_a) <- c("x", "y", "data")
+coordinates(new_a) <- ~x+y
+qq <- hscat(data~1, new_a, seq(0,1,.1)) 
+plot(qq, main="h-scatterplots")
+
+
+```
+
+From the variograms above we notice that there is a spatial component to the variance of the data of each pollutant. Moving towards the h-scatterplot,  we find relation between the correlation coefficient and h (the separation distance).
+
+
+
+```{r, warning = FALSE, results="hide"}
+
+b <- as.geodata(usable_india_data[,c(1,2,3)])
+var1 <- variog(b)
+var2 <- variog(b ,estimator.type="modulus", main = "Robust Semivariogram") # Robust Estimator 
+
+fit1 <- variofit(var1, cov.model="sph", ini.cov.pars=c(3000,17.5), nugget=500)
+fit2 <- variofit(var1, cov.model="exp", ini.cov.pars=c(3000,17.5), nugget=500)
+fit3 <- variofit(var1, cov.model="sph", ini.cov.pars=c(5000,17.5), nugget=500, weights = "cressie")
+fit4 <- variofit(var1, cov.model="sph", ini.cov.pars=c(5000,17.5), nugget=500, weights = "equal")
+fit5 <- variofit(var1)
+
+fit1_v2 <- variofit(var2, cov.model="sph", ini.cov.pars=c(3000,10), nugget=500) # fit1 with robust estimator
+fit2_v2 <- variofit(var2, cov.model="exp", ini.cov.pars=c(3000,10), nugget=500) # fit2 with robust estimator
+fit3_v2 <- variofit(var2, cov.model="sph", ini.cov.pars=c(5000,17.5), nugget=500, weights = "cressie") # fit3 with robust estimator
+fit4_v2 <- variofit(var2, cov.model="sph", ini.cov.pars=c(5000,17.5), nugget=500, weights = "equal") # fit4 with robust estimator
+fit5_v2 <- variofit(var2)
+
+```
+
+
+
+
+```{r, warning = FALSE, results="hide"}
+
+par(mfrow = c(1,2))
+
+plot(variog(b), main = "PM2.5 Variogram") # variable of interest
+lines(fit1, lty=1)
+lines(fit2, lty=2, col = "green")
+lines(fit3, lty=3, col = "blue")
+lines(fit4, lty=4, col = "pink")
+lines(fit5, lty=5, col = "red")
+
+
+plot(var2, main = "PM2.5 Robust Variogram") # variable of interest
+lines(fit1_v2, lty=1)
+lines(fit2_v2, lty=2, col = "green")
+lines(fit3_v2, lty=3, col = "blue")
+lines(fit4_v2, lty=4, col = "pink")
+lines(fit5_v2, lty=5, col = "red")
+
+
+# clouds
+cloud1 <- variog(b, max.dist=10, direction = pi/2, option = "cloud")
+cloud2 <- variog(b, estimator.type="modulus", max.dist=10, direction = pi/2, option = "cloud")
+par(mfrow=c(1,2))
+plot(cloud1, main = "Classical variogram")
+plot(cloud2, main = "Modulus variogram")
+
+
+
+box1 <- variog(b, bin.cloud=T, max.dist=10, direction = pi/2)
+box2 <- variog(b, bin.cloud=T, estimator.type="modulus", max.dist=10, direction = pi/2)
+par(mfrow=c(1,2))
+plot(box1, bin.cloud=T)
+plot(box2, bin.cloud=T)
+
+
+```
+
+By plotting multiple variograms models on the plot we find that the best option from those plotted and the choice that is closest to the minimization model is a variogram model with partial sill 3000, range of 17.5, and nugget of 500.
+
+
+logarithmic variable of interest:
+
+```{r, warning = FALSE, results="hide"}
+
+
+a <- as.data.frame(c(usable_india_data[,c(1,2)], log(usable_india_data[,c(3,4,5)])))
+b <- as.geodata(a)
+var1 <- variog(b, max.dist=25)
+var2 <- variog(b, max.dist = 25, estimator.type="modulus", main = "Robust Semivariogram")
+fit1 <- variofit(var1, cov.model="sph", ini.cov.pars=c(3000,17.5), nugget=500)
+fit2 <- variofit(var1, cov.model="exp", ini.cov.pars=c(3000,17.5), nugget=500)
+fit3 <- variofit(var1, cov.model="sph", ini.cov.pars=c(5000,17.5), nugget=500, weights = "cressie")
+fit4 <- variofit(var1, cov.model="sph", ini.cov.pars=c(5000,17.5), nugget=500, weights = "equal")
+fit5 <- variofit(var1)
+
+fit1_v2 <- variofit(var2, cov.model="sph", ini.cov.pars=c(3000,10), nugget=500)
+fit2_v2 <- variofit(var2, cov.model="exp", ini.cov.pars=c(3000,10), nugget=500)
+fit3_v2 <- variofit(var2, cov.model="sph", ini.cov.pars=c(5000,17.5), nugget=500, weights = "cressie")
+fit4_v2 <- variofit(var2, cov.model="sph", ini.cov.pars=c(5000,17.5), nugget=500, weights = "equal")
+fit5_v2 <- variofit(var2)
+
+```
+
+
+
+```{r, warning = FALSE, results="hide"}
+
+par(mfrow = c(1,2))
+
+plot(variog(b), main = "PM2.5 Variogram") # variable of interest
+lines(fit1, lty=1)
+lines(fit2, lty=2)
+lines(fit3, lty=1, col = "blue")
+lines(fit4, lty=2, col = "pink")
+lines(fit5, lty=5, col = "red")
+
+plot(var2, main = "PM2.5 Robust Variogram") # variable of interest
+lines(fit1_v2, lty=1)
+lines(fit2_v2, lty=2)
+lines(fit3_v2, lty=1, col = "blue")
+lines(fit4_v2, lty=2, col = "pink")
+lines(fit5_v2, lty=5, col = "red")
+
+
+# clouds
+cloud1 <- variog(b, max.dist=10, direction = pi/2, option = "cloud")
+cloud2 <- variog(b, estimator.type="modulus", max.dist=10, direction = pi/2, option = "cloud")
+#par(mfrow=c(1,2))
+#plot(cloud1, main = "Classical variogram")
+#plot(cloud2, main = "Modulus variogram")
+
+
+
+#box1 <- variog(b, bin.cloud=T, max.dist=10, direction = pi/2)
+#box2 <- variog(b, bin.cloud=T, estimator.type="modulus", max.dist=10, direction = pi/2)
+#par(mfrow=c(1,2))
+#plot(box1, bin.cloud=T)
+#plot(box2, bin.cloud=T)
+
+```
+
+Plotting the variagram with identical metrics we find that the variogram model fits the plot and is very similar to the minimization variogram. When we include the original boxplots of PM2.5 values and its clear distribution, it seems that a log tranformation would disrupt the interpretability of our predictions rather than improve accuracy and therefore we use the basic PM2.5 values instead of log(PM2.5) 
+
+
+```{r, warning = FALSE, results="hide"}
+
+my_data <- usable_india_data[,c(1,2,3)]
+names(my_data)  <- c("x", "y", "data")
+b1 <- as.geodata(my_data)
+#Compute the variogram for the following directions:
+var1 <- variog(b1, dir=pi/2, tol=pi/4, max.dist=10)
+var2 <- variog(b1, dir=pi * 7/18, tol=pi/4, max.dist=10)
+var3 <- variog(b1, dir=pi* 5/18, tol=pi/4, max.dist=10)
+var4 <- variog(b1, dir=pi * 3/18, tol=pi/4, max.dist=10)
+var5 <- variog(b1, dir=pi/18, tol=pi/4, max.dist=10)
+var6 <- variog(b1, dir=pi*17/18, tol=pi/4, max.dist=10)
+var7 <- variog(b1, dir=pi* 15/18, tol=pi/4, max.dist=10)
+var8 <- variog(b1, dir=pi* 13/18, tol=pi/4, max.dist=10)
+var9 <- variog(b1, dir= pi * 11/18, tol=pi/4, max.dist=10)
+#Plot the variograms:
+#par(mfrow=c(3, 3))
+#plot(var1, ylim=c(0,7000))
+#plot(var2, ylim=c(0,7000))
+#plot(var3, ylim=c(0,7000))
+#plot(var4, ylim=c(0,7000))
+#plot(var5, ylim=c(0,7000))
+#plot(var6, ylim=c(0,7000))
+#plot(var7, ylim=c(0,7000))
+#plot(var8, ylim=c(0,7000))
+#plot(var9, ylim=c(0,7000))
+```
+
+```{r, warning = FALSE, results="hide"}
+
+theta <- c(0, pi/9, pi/4.5, pi/3, pi/2.25, pi/18, pi/6, pi/3.6, pi/2.571)
+range <- c(3.8, 3.9, 3.4, 3.7, 3.2, 2.9, 2.6, 2.7, 3)
+x1 <- cos(theta[1:5])*range[1:5]
+y1 <- sin(theta[1:5])*range[1:5]
+x2 <- range[6:9]*sin(theta[6:9])
+y2 <- -range[6:9]*cos(theta[6:9])
+x11 <- -x1
+y11 <- -y1
+x22 <- -x2
+y22 <- -y2
+plot(x1,y1, xlim=c(-8,8), ylim=c(-8,8 ), xaxt="n", yaxt="n",
+     ylab="y", xlab="x")
+points(x11,y11)
+points(x2,y2)
+points(x22,y22)
+segments(x1,y1, x11, y11)
+segments(x2,y2, x22, y22)
+segments(0, -34.8, 0, 34.8, lty=2)
+segments(-28, 0, 28, 0, lty=2)
+
+var1 <- variog4(b1, max.dist = 200)
+plot(var1)
+
+```
+
+
+The final aspect of our spacial analysis involves checking for a trend based on the direction of our variogram. At first the rose diagram was believed to indicate that there was a trend in our data, but when examining directional variograms for 4 directions we find that the given variagrams are not easily distinguishable nor is there a parabolic shape indicating a clear trend. Based on the four directional variogram the trend of our data was found to be negligible. 
+
+
+
+
+
+
+
+
+
+# Spacial Predictions 
+
+
+Using the variogram model found above we use Kriging, a method of interpolation, to predict the values on a grid. However, in order to select the best type of kriging we first do cross validation on a subset of points. 
+
+
+## Ordinary Kriging 
+
+```{r, warning = FALSE, results="hide"}
+
+my_data <- usable_india_data[,c(1,2,3)] # Only using the PM2.5 data
+names(my_data)  <- c("x", "y", "data")
+b1 <- as.geodata(my_data)
+
+g <- gstat(id="PM2.5", formula = data~1, locations = ~x+y, data = my_data)
+
+#Fit a model variogram to the sample variogram:
+v.fit <- fit.variogram(variogram(g), vgm(3000,"Exp",17.5,500))
+
+plot(variogram(g),v.fit)
+
+
+x.range <- as.integer(range(my_data[,1]))
+x.range
+
+y.range <- as.integer(range(my_data[,2]))
+y.range
+
+grd <- expand.grid(x=seq(from=x.range[1], to=x.range[2], by=.1),
+y=seq(from=y.range[1], to=y.range[2], by=.1))
+
+
+pr_ok <- krige(id="PM2.5", formula = data~1, locations=~x+y, model=v.fit, data=my_data, newdata=grd)
+
+
+#Cross validation:
+cv_ok<- krige.cv(formula = data~1, locations=~x+y, model=v.fit, data=my_data, nfold=nrow(my_data)) 
+
+```
+
+
+
+
+## Universal Kriging
+
+```{r, warning = FALSE, results="hide"}
+
+g1 <- gstat(id="PM2.5", formula = data~x+y, locations = ~x+y, data = my_data)
+
+
+#Fit a model variogram to the sample variogram:
+v.fit1 <- fit.variogram(variogram(g1, cutoff = 20), vgm(3000,"Exp",17.5,500))
+
+plot(variogram(g1),v.fit1)
+
+
+x.range <- as.integer(range(my_data[,1]))
+x.range
+
+y.range <- as.integer(range(my_data[,2]))
+y.range
+
+grd <- expand.grid(x=seq(from=x.range[1], to=x.range[2], by=.1),
+y=seq(from=y.range[1], to=y.range[2], by=.1))
+
+
+pr_uk <- krige(id="PM2.5", formula = data~x+y, locations=~x+y, model=v.fit1, data=my_data, newdata=grd)
+
+#Universal kriging:
+cv_pr_u<- krige.cv(formula = data~x+y, locations=~x+y, model=v.fit1, data=my_data, nfold=nrow(my_data))
+
+
+```
+
+
+## Co-Kriging with PM10
+
+```{r, warning = FALSE, results="hide"}
+
+
+# in order to fix an error replace longitude and latitude with x and y
+names(usable_india_data) <- c("x", "y",  "PM2.5",     "PM10",      "NO2",       "NH3")  
+
+
+#CO-KRIGING:
+#Create a gstat object:
+g1 <- gstat(id="PM2.5", formula = PM2.5~1, locations = ~x+y, data = usable_india_data) 
+#Append:
+g1 <- gstat(g1,id="PM10", formula = PM10~1, locations = ~x+y, data = usable_india_data) 
+
+
+#Fit a model variogram to the target variogram:
+g <- gstat(id="PM2.5", formula = PM2.5~1, locations = ~x+y, data = usable_india_data)
+
+v.fit <- fit.variogram(variogram(g), vgm(3000,"Exp",17.5,500)) 
+
+#Fit a model variogram to all the variograms:
+g1 <- gstat(id="PM2.5", formula = PM2.5~1, locations = ~x+y, data = usable_india_data) 
+g1 <- gstat(g1,id="PM10", formula = PM10~1, locations = ~x+y, data = usable_india_data) 
+
+
+vm <- variogram(g1) 
+
+vm.fit <- fit.lmc(vm, g1, model=v.fit) 
+
+#Plot the fitted variograms to all the sample variograms:
+plot(variogram(g1),vm.fit)
+
+#Create the grid for predictions:
+x.range <- as.integer(range(usable_india_data[,1])) 
+y.range <- as.integer(range(usable_india_data[,2])) 
+grd <- expand.grid(x=seq(from=x.range[1], to=x.range[2], by=.1), 
+                   y=seq(from=y.range[1], to=y.range[2], by=.1)) 
+
+
+
+#Perform co-kriging predictions:
+ck1 <- predict(vm.fit, grd) 
+
+#Perform cross-validation:
+cv_ck1 <- gstat.cv(vm.fit)
+
+```
+
+
+## Co-Kriging with NO2
+
+```{r, warning = FALSE, results="hide"}
+
+#CO-KRIGING:
+#Create a gstat object:
+g1 <- gstat(id="PM2.5", formula = PM2.5~1, locations = ~x+y, data = usable_india_data) 
+#Append:
+g1 <- gstat(g1,id="NO2", formula = NO2~1, locations = ~x+y, data = usable_india_data) 
+
+
+#Fit a model variogram to the target variogram:
+g <- gstat(id="PM2.5", formula = PM2.5~1, locations = ~x+y, data = usable_india_data)
+
+v.fit <- fit.variogram(variogram(g), vgm(3000,"Exp",17.5,500)) 
+
+#Fit a model variogram to all the variograms:
+g1 <- gstat(id="PM2.5", formula = PM2.5~1, locations = ~x+y, data = usable_india_data) 
+g1 <- gstat(g1,id="NO2", formula = NO2~1, locations = ~x+y, data = usable_india_data) 
+
+
+vm <- variogram(g1) 
+
+vm.fit <- fit.lmc(vm, g1, model=v.fit) 
+
+#Plot the fitted variograms to all the sample variograms:
+plot(variogram(g1),vm.fit)
+
+#Create the grid for predictions:
+x.range <- as.integer(range(usable_india_data[,1])) 
+y.range <- as.integer(range(usable_india_data[,2])) 
+grd <- expand.grid(x=seq(from=x.range[1], to=x.range[2], by=.1), 
+                   y=seq(from=y.range[1], to=y.range[2], by=.1)) 
+
+
+
+#Perform co-kriging predictions:
+ck2 <- predict(vm.fit, grd) 
+
+#Perform cross-validation:
+cv_ck2 <- gstat.cv(vm.fit)
+
+```
+
+
+
+
+##### Comparing the different sum of squares:
+
+```{r}
+
+#COMPARE ORDINARY KRIGING WITH CO-KRIGING of PM10, CO-KRIGING of NO2, and Universal Kriging 
+
+sum(cv_ok$residual^2)/nrow(a)
+
+sum(cv_pr_u$residual^2)
+
+sum(cv_ck1$residual^2)/nrow(a)
+
+sum(cv_ck2$residual^2)/nrow(a)
+
+```
+
+From the cross validation of Ordinary Kriging, Universal Kriging, Co-Kriging PM2.5, and Co-Kriging PM10 given above in the same order the method with the lowest sum of squared residuals is Co-kriging with PM10. 
+
+
+
+
+### CoKriging with PM10 Raster Map
+
+```{r}
+qqq <- matrix(ck1$PM2.5.pred,
+                 length(seq(from=x.range[1], to=x.range[2], by=.1)),
+                 length(seq(from=y.range[1], to=y.range[2], by=.1)) )
+
+image(seq(from=x.range[1], to=x.range[2], by=.1),
+      seq(from=y.range[1], to=y.range[2], by=.1), qqq,
+  xlab="West to East", ylab="South to North", main="Predicted values")
+
+points(usable_india_data[,c(1,2)])  #The data points can be plotted on the raster map.
+
+
+qqq <- matrix(ck1$PM2.5.var,
+                 length(seq(from=x.range[1], to=x.range[2], by=.1)),
+                 length(seq(from=y.range[1], to=y.range[2], by=.1)) )
+
+image(seq(from=x.range[1], to=x.range[2], by=.1),
+      seq(from=y.range[1], to=y.range[2], by=.1), qqq,
+  xlab="West to East", ylab="South to North", main="Kriging variances")
+
+points(usable_india_data[,c(1,2)])  #The data points can be plotted on the raster map.
+
+
+
+
+```
+
+
+
+
+## Conclusions
+
+  Overall the raster map above helps us get a clearer picture of our PM2.5 situation in the plotted region of India. It should not surprise us that Co-Kriging with PM10 was the most accurate prediction method as the predictor is highly correlated with PM2.5. Meanwhile, one of the most important aspects an observer should note from the raster map is the localization of heavy pollution specifically PM2.5. One can speculate that perhaps a high number of sites in one region indicates a city where more pollution would be prevelant or maybe warmer climates could be linked with PM2.5 concentration. In order to further understand the cause of PM2.5 prevelance geographically, research within this field should be continued. 
+
+
+
+
+
+
+
+
+
+
