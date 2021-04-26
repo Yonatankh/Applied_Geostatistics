@@ -16,6 +16,7 @@ knitr::opts_chunk$set(echo = FALSE)
 library(geoR)
 library(gstat)
 library(sp)
+library(maps)
 
 ```
 
@@ -598,6 +599,9 @@ image(seq(from=x.range[1], to=x.range[2], by=.1),
   xlab="West to East", ylab="South to North", main="Predicted values")
 
 points(usable_india_data[,c(1,2)])  #The data points can be plotted on the raster map.
+map( add = T )
+
+
 
 
 qqq <- matrix(ck1$PM2.5.var,
@@ -609,8 +613,7 @@ image(seq(from=x.range[1], to=x.range[2], by=.1),
   xlab="West to East", ylab="South to North", main="Kriging variances")
 
 points(usable_india_data[,c(1,2)])  #The data points can be plotted on the raster map.
-
-
+map( add = T )
 
 
 ```
