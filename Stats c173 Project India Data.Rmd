@@ -590,7 +590,16 @@ From the cross validation of Ordinary Kriging, Universal Kriging, Co-Kriging PM2
 ### CoKriging with PM10 Raster Map
 
 ```{r}
-qqq <- matrix(ck1$PM2.5.pred,
+
+
+#Assign NA values to all the points outside India:
+in.what.state <- map.where(database="world", x=grd$x, y=grd$y)
+in.ca <- which(in.what.state=="India")
+pred <- ck1$PM2.5.pred
+pred[-in.ca] <- NA
+
+
+qqq <- matrix(pred,
                  length(seq(from=x.range[1], to=x.range[2], by=.1)),
                  length(seq(from=y.range[1], to=y.range[2], by=.1)) )
 
